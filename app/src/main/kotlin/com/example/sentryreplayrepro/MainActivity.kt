@@ -10,7 +10,6 @@ import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.widget.*
 import io.sentry.Sentry
-import io.sentry.android.replay.ReplayIntegration
 
 /**
  * Entry point. Lets you choose which reproduction scenario to run before
@@ -38,8 +37,8 @@ class MainActivity : Activity() {
         })
 
         root.addView(TextView(this).apply {
-            text = "SDK 8.38.0 · onErrorSampleRate = Double.MIN_VALUE\n" +
-                    "sessionSampleRate = Double.MIN_VALUE"
+            text = "SDK 8.38.0 · init: both rates = Double.MIN_VALUE\n" +
+                    "Replay buffer is ON at launch — opt-in happens at login"
             textSize = 13f
             gravity = Gravity.CENTER
             setTextColor(Color.DKGRAY)
@@ -64,7 +63,8 @@ class MainActivity : Activity() {
         ) { scenarioA() })
 
         root.addView(TextView(this).apply {
-            text = "stop() deletes the buffer → replay likely starts cold at DebugActivity"
+            text = "→ LoginActivity → opt-in: stop/start + onErrorSampleRate=1.0 → ContentActivity → DebugActivity\n" +
+                    "stop() discards pre-login buffer; post-login content should appear in replay"
             textSize = 11f
             setTextColor(Color.DKGRAY)
             setPadding(8, 0, 8, 16)
@@ -79,7 +79,8 @@ class MainActivity : Activity() {
         ) { scenarioB() })
 
         root.addView(TextView(this).apply {
-            text = "No stop/start → buffer preserved → replay should include full 30s"
+            text = "→ LoginActivity → opt-in: onErrorSampleRate=1.0 only (no stop/start) → ContentActivity → DebugActivity\n" +
+                    "Buffer preserved — replay includes pre-login time + ContentActivity content"
             textSize = 11f
             setTextColor(Color.DKGRAY)
             setPadding(8, 0, 8, 16)
@@ -100,6 +101,54 @@ class MainActivity : Activity() {
             startActivity(Intent(this, ContentActivity::class.java))
         })
 
+        // ------------------------------------------------------------------
+        // Scenario D — immediate login sim + 5s wait → DebugActivity
+        // ------------------------------------------------------------------
+        root.addView(makeButton(
+            "Scenario D: Login now + wait 5s → DebugActivity",
+            Color.parseColor("#e67e22")
+        ) { scenarioD() })
+
+        root.addView(TextView(this).apply {
+            text = "→ LoginActivity → opt-in: stop/start → 5s → DebugActivity\n" +
+                    "Tests: very short post-login wait → empty/tiny replay?"
+            textSize = 11f
+            setTextColor(Color.DKGRAY)
+            setPadding(8, 0, 8, 16)
+        })
+
+        // ------------------------------------------------------------------
+        // Scenario E — immediate login sim + 60s wait → DebugActivity
+        // ------------------------------------------------------------------
+        root.addView(makeButton(
+            "Scenario E: Login now + wait 60s → DebugActivity",
+            Color.parseColor("#8e44ad")
+        ) { scenarioE() })
+
+        root.addView(TextView(this).apply {
+            text = "→ LoginActivity → opt-in: stop/start → 60s → DebugActivity\n" +
+                    "Compare D vs E: does replay content scale with post-login wait time?"
+            textSize = 11f
+            setTextColor(Color.DKGRAY)
+            setPadding(8, 0, 8, 16)
+        })
+
+        // ------------------------------------------------------------------
+        // Scenario F — opt-out privacy check: stop() discards pre-login buffer
+        // ------------------------------------------------------------------
+        root.addView(makeButton(
+            "Scenario F: Opt-out privacy check (stop → ContentActivity → Debug)",
+            Color.parseColor("#c0392b")
+        ) { scenarioF() })
+
+        root.addView(TextView(this).apply {
+            text = "→ LoginActivity → opt-OUT: stop() → ContentActivity → DebugActivity\n" +
+                    "Pre-login buffer DISCARDED. Replay in Sentry must NOT show LoginActivity content."
+            textSize = 11f
+            setTextColor(Color.DKGRAY)
+            setPadding(8, 0, 8, 16)
+        })
+
         root.addView(sectionLabel("━━━  State & Navigation  ━━━"))
 
         root.addView(makeButton("Check replay state", Color.parseColor("#7f8c8d")) {
@@ -117,72 +166,43 @@ class MainActivity : Activity() {
     }
 
     // -----------------------------------------------------------------------
-    // Scenario A: customer's current workaround
+    // Scenario A: customer's workaround — routed through login screen
     // -----------------------------------------------------------------------
     private fun scenarioA() {
-        Log.d(TAG, "========================================")
-        Log.d(TAG, "SCENARIO A: stop/start workaround begin")
-        Log.d(TAG, "========================================")
-
-        val app = App.get(this)
-        // IReplayController (returned by Sentry.replay()) lacks stop/start/resume in 8.38.0 —
-        // cast to the implementation class to reach the full lifecycle API.
-        val replayController = Sentry.replay() as? ReplayIntegration
-
-        val idBefore = App.getReplayId()
-        val recBefore = App.getIsRecording()
-        Log.d(TAG, "[A] BEFORE stop  → replayId=$idBefore  isRecording=$recBefore")
-
-        // ← THIS IS THE BUG: stop() discards the in-memory frame buffer.
-        replayController?.stop()
-        Log.d(TAG, "[A] AFTER  stop  → replayId=${App.getReplayId()}  isRecording=${App.getIsRecording()}")
-
-        // Mutate rate while stopped (SDK in session mode after start).
-        app.sentryOptions.sessionReplay.sessionSampleRate = 1.0
-        Log.d(TAG, "[A] sessionSampleRate mutated to 1.0")
-
-        // Restart — switches mode to SESSION (continuous recording, no buffer).
-        replayController?.start()
-        replayController?.resume()
-        val idAfter = App.getReplayId()
-        Log.d(TAG, "[A] AFTER  start → replayId=$idAfter  isRecording=${App.getIsRecording()}")
-        Log.d(TAG, "[A] Buffer was cleared by stop(). New session starts NOW.")
-
-        updateStatus(
-            "Scenario A done.\n" +
-                    "replayId before stop: $idBefore\n" +
-                    "replayId after start: $idAfter\n\n" +
-                    "Buffer was erased by stop(). If replay starts cold at DebugActivity — this is the bug."
-        )
+        Log.d(TAG, "SCENARIO A → LoginActivity (stop/start on opt-in → ContentActivity → DebugActivity)")
+        startActivity(Intent(this, LoginActivity::class.java).putExtra(LoginActivity.EXTRA_SCENARIO, "A"))
     }
 
     // -----------------------------------------------------------------------
-    // Scenario B: proposed fix — mutate rate only, never stop/start
+    // Scenario B: proposed fix — routed through login screen
     // -----------------------------------------------------------------------
     private fun scenarioB() {
-        Log.d(TAG, "========================================")
-        Log.d(TAG, "SCENARIO B: mutate rate only (no stop/start)")
-        Log.d(TAG, "========================================")
+        Log.d(TAG, "SCENARIO B → LoginActivity (rate mutation only on opt-in → ContentActivity → DebugActivity)")
+        startActivity(Intent(this, LoginActivity::class.java).putExtra(LoginActivity.EXTRA_SCENARIO, "B"))
+    }
 
-        val app = App.get(this)
-        val idBefore = App.getReplayId()
-        val recBefore = App.getIsRecording()
-        Log.d(TAG, "[B] BEFORE rate change → replayId=$idBefore  isRecording=$recBefore")
+    // -----------------------------------------------------------------------
+    // Scenario D: login screen → stop/start on opt-in → 5s → DebugActivity
+    // -----------------------------------------------------------------------
+    private fun scenarioD() {
+        Log.d(TAG, "SCENARIO D → LoginActivity (stop/start on opt-in → 5s → DebugActivity)")
+        startActivity(Intent(this, LoginActivity::class.java).putExtra(LoginActivity.EXTRA_SCENARIO, "D"))
+    }
 
-        // Only change onErrorSampleRate. captureReplay() reads this live at call time.
-        // Stays in BUFFER mode — the rolling frame buffer is never discarded.
-        app.sentryOptions.sessionReplay.onErrorSampleRate = 1.0
-        Log.d(TAG, "[B] onErrorSampleRate mutated to 1.0 (buffer preserved, still BUFFER mode)")
+    // -----------------------------------------------------------------------
+    // Scenario F: login screen → explicit stop() on opt-out → ContentActivity → DebugActivity
+    // -----------------------------------------------------------------------
+    private fun scenarioF() {
+        Log.d(TAG, "SCENARIO F → LoginActivity (stop() on opt-out → ContentActivity → DebugActivity)")
+        startActivity(Intent(this, LoginActivity::class.java).putExtra(LoginActivity.EXTRA_SCENARIO, "F"))
+    }
 
-        val idAfter = App.getReplayId()
-        Log.d(TAG, "[B] AFTER  rate change → replayId=$idAfter  isRecording=${App.getIsRecording()}")
-
-        updateStatus(
-            "Scenario B done.\n" +
-                    "onErrorSampleRate = 1.0 (was Double.MIN_VALUE)\n" +
-                    "replayId: $idAfter\n\n" +
-                    "Buffer intact — replay should include full 30s from ContentActivity."
-        )
+    // -----------------------------------------------------------------------
+    // Scenario E: login screen → stop/start on opt-in → 60s → DebugActivity
+    // -----------------------------------------------------------------------
+    private fun scenarioE() {
+        Log.d(TAG, "SCENARIO E → LoginActivity (stop/start on opt-in → 60s → DebugActivity)")
+        startActivity(Intent(this, LoginActivity::class.java).putExtra(LoginActivity.EXTRA_SCENARIO, "E"))
     }
 
     private fun checkAndDisplayReplayState() {

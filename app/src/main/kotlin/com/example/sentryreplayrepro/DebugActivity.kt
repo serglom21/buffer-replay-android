@@ -83,9 +83,14 @@ class DebugActivity : Activity() {
         val recBefore = App.getIsRecording()
         val onErrorBefore = app.sentryOptions.sessionReplay.onErrorSampleRate
         val sessionBefore = app.sentryOptions.sessionReplay.sessionSampleRate
-        Log.d(TAG, "=== DebugActivity: captureReplay triggered ===")
+        val strategyBefore = App.getCaptureStrategyInfo()
+        Log.d(TAG, "=== DebugActivity: captureReplay(false) triggered ===")
         Log.d(TAG, "  BEFORE capture: replayId=$idBefore  isRecording=$recBefore")
-        Log.d(TAG, "  onErrorSampleRate=$onErrorBefore  sessionSampleRate=$sessionBefore")
+        Log.d(TAG, "  onErrorSampleRate AT MOMENT OF CAPTURE: $onErrorBefore")
+        Log.d(TAG, "  sessionSampleRate AT MOMENT OF CAPTURE: $sessionBefore")
+        Log.d(TAG, "  captureStrategy   AT MOMENT OF CAPTURE: $strategyBefore")
+        Log.d(TAG, "  → replay_type in envelope will match strategy above")
+        Log.d(TAG, "  [HINT] run: adb logcat -s Sentry   to see the full envelope payload with replay_type")
 
         // 2. Capture the replay
         //    captureReplay(false) — false = isTerminating (irrelevant here; true is for crash handlers)
@@ -114,8 +119,11 @@ class DebugActivity : Activity() {
             appendLine("isRecording before: $recBefore")
             appendLine("isRecording after:  $recAfter")
             appendLine()
-            appendLine("onErrorSampleRate:  $onErrorBefore")
-            appendLine("sessionSampleRate:  $sessionBefore")
+            appendLine("onErrorSampleRate AT CAPTURE: $onErrorBefore")
+            appendLine("sessionSampleRate AT CAPTURE: $sessionBefore")
+            appendLine("captureStrategy   AT CAPTURE: $strategyBefore")
+            appendLine("  SessionCaptureStrategy → replay_type='session' (session mode ✓)")
+            appendLine("  BufferCaptureStrategy  → replay_type='buffer'  (still buffer mode!)")
             appendLine()
             appendLine("captureReplay() success: $captured")
             appendLine()

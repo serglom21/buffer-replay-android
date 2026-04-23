@@ -19,7 +19,7 @@ class App : Application() {
         super.onCreate()
 
         SentryAndroid.init(this) { options ->
-            options.dsn = "YOUR_DSN_HERE" // TODO: replace with your DSN
+            options.dsn = "https://514d5e38a4003c2cf958c53c77679925@o4508236363464704.ingest.us.sentry.io/4508847444918272" // TODO: replace with your DSN
             options.isDebug = true        // enables SDK debug logging to logcat
 
             // Customer's approach: Double.MIN_VALUE (not 0.0) keeps replay "enabled"
@@ -28,6 +28,10 @@ class App : Application() {
             // but effectively never samples on its own — manual captureReplay() is the trigger.
             options.sessionReplay.onErrorSampleRate = Double.MIN_VALUE
             options.sessionReplay.sessionSampleRate = Double.MIN_VALUE
+
+            // Unmask everything so replay recordings show full UI content.
+            options.sessionReplay.setMaskAllText(false)
+            options.sessionReplay.setMaskAllImages(false)
 
             sentryOptions = options
         }
@@ -115,6 +119,47 @@ class App : Application() {
             } catch (e: Exception) {
                 Log.e(TAG, "captureReplay threw: ${e.message}", e)
                 false
+            }
+        }
+
+        /**
+         * Reflects into ReplayIntegration to read the captureStrategy field.
+         * Returns a string identifying the strategy class and the replay_type value
+         * that would appear in the Sentry envelope payload:
+         *   "SessionCaptureStrategy → envelope replay_type='session'" = SDK is in session mode
+         *   "BufferCaptureStrategy  → envelope replay_type='buffer'"  = SDK is still in buffer mode
+         *
+         * Tries the known field name "captureStrategy" first, then falls back to scanning
+         * all declared fields for anything with "strategy" in its name or type.
+         */
+        fun getCaptureStrategyInfo(): String {
+            return try {
+                val replay = Sentry.replay() as? ReplayIntegration ?: return "replay=null"
+                var field = try {
+                    ReplayIntegration::class.java.getDeclaredField("captureStrategy")
+                } catch (e: NoSuchFieldException) {
+                    replay.javaClass.declaredFields.firstOrNull { f ->
+                        f.name.contains("strategy", ignoreCase = true) ||
+                            f.type.simpleName.contains("Strategy", ignoreCase = true)
+                    }
+                }
+                if (field != null) {
+                    field.isAccessible = true
+                    val strategy = field.get(replay)
+                    val className = strategy?.javaClass?.simpleName ?: "null"
+                    val replayType = when {
+                        className.contains("Session", ignoreCase = true) -> "session"
+                        className.contains("Buffer", ignoreCase = true) -> "buffer"
+                        else -> "unknown"
+                    }
+                    "$className → envelope replay_type='$replayType'"
+                } else {
+                    val allFields = replay.javaClass.declaredFields
+                        .joinToString { "${it.name}:${it.type.simpleName}" }
+                    "no strategy field found — all fields: $allFields"
+                }
+            } catch (e: Exception) {
+                "getCaptureStrategyInfo error: ${e.message}"
             }
         }
 

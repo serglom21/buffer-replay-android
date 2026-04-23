@@ -26,6 +26,7 @@
             </intent-filter>
         </activity>
 
+        <activity android:name=".LoginActivity" android:exported="false" />
         <activity android:name=".ContentActivity" android:exported="false" />
         <activity android:name=".DebugActivity" android:exported="false" />
 
